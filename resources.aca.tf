@@ -1,93 +1,35 @@
+module "azure-container-app" {
+    source = "git::https://github.com/bitbool-terraform/azure-container-app.git?ref=v1.0.1"
+    # source = "../../bitbool-terraform/azure-container-app"
 
+    location = var.letencrypt_validator.location
+    resource_group = var.letencrypt_validator.resource_group
 
-resource "azurerm_log_analytics_workspace" "law" {
-  name                = "law‐containerapps"
-  location            = azurerm_resource_group.rg.location
-  resource_group_name = azurerm_resource_group.rg.name
-  sku                 = "PerGB2018"
-  retention_in_days   = 30
-}
+    container_app_environment_id = var.letencrypt_validator.aca_env_id
 
-resource "azurerm_container_app_environment" "ca_env" {
-  name                       = "env‐containerapps"
-  location                   = azurerm_resource_group.rg.location
-  resource_group_name        = azurerm_resource_group.rg.name
-  log_analytics_workspace_id = azurerm_log_analytics_workspace.law.id
-}
+    app_name = lower(format("%s-nginx",var.letencrypt_validator.name))
+    app_image = lookup(var.letencrypt_validator,"nginx_image", "nginx:latest")
+    app_env = each.value.env
 
-resource "azurerm_container_app_environment_storage" "env_storage" {
-  name                         = "fileshare‐mount"
-  container_app_environment_id = azurerm_container_app_environment.ca_env.id
+    app_ingress_enabled = each.value.ingress_enabled
 
-  account_name = azurerm_storage_account.sa.name
-  share_name   = azurerm_storage_share.share.name
+    identities = each.value.identities
 
-  # Use the storage account’s primary key to give the environment access
-  access_key = azurerm_storage_account.sa.primary_access_key
+    workload_profile = each.value.workload_profile
 
-  access_mode = "ReadWrite"
-}
+    app_gw = lookup(each.value,"app_gw",{})
 
+    secrets = local.secretSets_combined
+    app_secrets = each.value.secrets
+    registry = lookup(each.value,"registry",null)
+    target_port = each.value.target_port
+    tags        = each.value.tags
+    
+    liveness_probe=each.value.liveness_probe
+    cpu=lookup(each.value,"cpu",0.25)
+    memory=lookup(each.value,"memory","0.5Gi")
+    max_replicas=lookup(each.value,"max_replicas",1)
+    min_replicas=lookup(each.value,"min_replicas",1)
 
-
-
-resource "azurerm_container_app_job" "daily_worker" {
-  name                         = "daily‐worker‐job"
-  location                     = azurerm_resource_group.rg.location
-  resource_group_name          = azurerm_resource_group.rg.name
-  container_app_environment_id = azurerm_container_app_environment.ca_env.id
-
-  # Configure the schedule trigger here:
-  schedule_trigger_config {
-    # Every day at 02:00 (UTC). Adjust to your timezone if needed.
-    cron_expression = "0 2 * * *"
-    parallelism     = 1
-    replica_completion_count = 1
-  }
-
-  # Optional: limit retries/timeouts for each replica run
-  replica_timeout_in_seconds = 600    # abort if >10 minutes
-  replica_retry_limit        = 1      # give up after 1 retry
-
-  template {
-    # ---------- Define the shared Azure File volume ----------
-    volume {
-      name         = "sharedvolume"                              # must match the same name you used in Container App
-      storage_type = "AzureFile"
-      storage_name = azurerm_container_app_environment_storage.env_storage.name
-    }
-
-    # ---------- Define the job container that uses it ----------
-    container {
-      name   = "worker‐container"
-      image  = "mcr.microsoft.com/azuredocs/containerapps‐helloworld:latest" 
-      cpu    = 0.25
-      memory = "0.5Gi"
-
-      # Mount the same volume under a different path (e.g. /mnt/jobdata)
-      volume_mounts {
-        name = "sharedvolume"
-        path = "/mnt/jobdata"
-      }
-
-      # Pass any arguments or env‐vars that your job needs:
-      # command = ["python", "process_data.py"]
-      # env {
-      #   name  = "ENVIRONMENT"
-      #   value = "prod"
-      # }
-    }
-
-    # You can also define init_containers { } if you need pre‐processing
-    # or additional volume_mounts inside them, but the pattern is identical.
-  }
-
-  identity {
-    type = "SystemAssigned"
-  }
-
-  depends_on = [
-    azurerm_container_app_environment.ca_env,
-    azurerm_container_app_environment_storage.env_storage,
-  ]
+    appgw_hostname_override=lookup(each.value,"appgw_hostname_override",false)
 }
